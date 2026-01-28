@@ -1,0 +1,20 @@
+[project]
+name = "grand-tour-dataloader"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { email = "laurence.w.liang@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=4.5.0",
+    "ruff>=0.14.14",
+]
+
+[project.scripts]
+grand-tour-dataloader = "grand_tour_dataloader:main"
+
+[build-system]
+requires = ["uv_build>=0.8.22,<0.9.0"]
+build-backend = "uv_build"
