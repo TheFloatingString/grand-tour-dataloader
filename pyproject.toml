@@ -1,14 +1,14 @@
 [project]
 name = "grand-tour-dataloader"
 version = "0.1.0"
-description = "Add your description here"
+description = "Dataloader for the Grand Tour legged robotics dataset"
 readme = "README.md"
 authors = [
     { email = "laurence.w.liang@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "datasets>=4.5.0",
+    "huggingface-hub>=0.26.0",
     "ruff>=0.14.14",
 ]
 

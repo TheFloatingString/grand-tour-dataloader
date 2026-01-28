@@ -235,7 +235,7 @@ if __name__ == "__main__":
     _print_intro()
 
     # Example 1: List missions
-    example_list_missions()
+    # example_list_missions()
 
     # Example 2: Load all data
     # example_load_all_data()
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     # example_load_filtered_lidar()
 
     # Example 5: Load front cameras
-    # example_load_front_cameras()
+    example_load_front_cameras()
 
     # Example 6: Load specific sensors
     # example_load_specific_sensors()
