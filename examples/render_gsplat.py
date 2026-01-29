@@ -4,20 +4,31 @@ and novel view rendering with gsplat on Modal.
 """
 
 import modal
-import torch
-import numpy as np
-from PIL import Image
 from typing import Tuple
 
-# Define Modal image with dependencies
-image = modal.Image.debian_slim(python_version="3.11").pip_install(
-    "torch",
-    "torchvision",
-    "transformers",
-    "pillow",
-    "numpy",
-    "huggingface_hub",
-    "gsplat",
+# Define Modal image with CUDA and dependencies
+image = (
+    modal.Image.from_registry("nvidia/cuda:12.1.0-devel-ubuntu22.04", add_python="3.11")
+    .apt_install("git", "build-essential", "clang")
+    .pip_install(
+        "numpy<2",
+        "ninja",
+        "packaging",
+        "wheel",
+        "setuptools",
+    )
+    .pip_install(
+        "torch==2.2.0",
+        "torchvision==0.17.0",
+        "torchaudio==2.2.0",
+        extra_index_url="https://download.pytorch.org/whl/cu121",
+    )
+    .run_commands(
+        "python -c 'import torch; print(f\"PyTorch {torch.__version__} installed\")'",
+        "pip install transformers pillow huggingface_hub",
+        "python -c 'import transformers; print(f\"Transformers {transformers.__version__} installed\")'",
+        "TORCH_CUDA_ARCH_LIST='7.5 8.0 8.6 8.9 9.0' pip install git+https://github.com/nerfstudio-project/gsplat.git",
+    )
 )
 
 app = modal.App("render-gsplat")
@@ -25,8 +36,9 @@ app = modal.App("render-gsplat")
 
 def load_depth_anything_model(
     model_name: str = "depth_anything_v2_vits.pth",
-) -> torch.nn.Module:
+):
     """Load the Depth-Anything-V2 model."""
+    import torch
     from transformers import AutoModelForDepthEstimation
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,10 +50,11 @@ def load_depth_anything_model(
     return model
 
 
-def estimate_depth(
-    image_path: str, model: torch.nn.Module
-) -> Tuple[np.ndarray, np.ndarray]:
+def estimate_depth(image_path: str, model):
     """Estimate depth from RGB image."""
+    import torch
+    import numpy as np
+    from PIL import Image
     from transformers import AutoImageProcessor
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,10 +86,11 @@ def estimate_depth(
     return rgb, depth
 
 
-def create_point_cloud(
-    rgb: np.ndarray, depth: np.ndarray, intrinsics: np.ndarray
-) -> Tuple[torch.Tensor, torch.Tensor]:
+def create_point_cloud(rgb, depth, intrinsics):
     """Convert RGB-D to 3D point cloud."""
+    import torch
+    import numpy as np
+
     h, w = depth.shape
     fx, fy = intrinsics[0, 0], intrinsics[1, 1]
     cx, cy = intrinsics[0, 2], intrinsics[1, 2]
@@ -92,15 +106,11 @@ def create_point_cloud(
     return torch.from_numpy(points).float(), torch.from_numpy(colors).float()
 
 
-def render_simple_projection(
-    points: torch.Tensor,
-    colors: torch.Tensor,
-    width: int,
-    height: int,
-    viewmat: torch.Tensor,
-    K: torch.Tensor,
-) -> np.ndarray:
+def render_simple_projection(points, colors, width: int, height: int, viewmat, K):
     """Simple CPU-based point projection renderer."""
+    import torch
+    import numpy as np
+
     # Transform points to camera space
     points_h = torch.cat([points, torch.ones(points.shape[0], 1)], dim=1)
     points_cam = (viewmat @ points_h.T).T[:, :3]
@@ -132,15 +142,10 @@ def render_simple_projection(
     return image
 
 
-def render_with_gsplat(
-    points: torch.Tensor,
-    colors: torch.Tensor,
-    width: int,
-    height: int,
-    viewmat: torch.Tensor,
-    K: torch.Tensor,
-) -> torch.Tensor:
+def render_with_gsplat(points, colors, width: int, height: int, viewmat, K):
     """Render point cloud using gsplat (CUDA required)."""
+    import torch
+
     if not torch.cuda.is_available():
         print("Warning: CUDA not available, using simple CPU renderer")
         img = render_simple_projection(points, colors, width, height, viewmat, K)
@@ -222,8 +227,11 @@ def get_first_center_rgb_image(mission: str, cache_dir: str) -> str:
     return str(existing_images[0])
 
 
-def create_comparison_image(original: np.ndarray, rendered: np.ndarray) -> Image.Image:
+def create_comparison_image(original, rendered):
     """Create side-by-side comparison image."""
+    import numpy as np
+    from PIL import Image
+
     h, w = original.shape[:2]
 
     # Create canvas for side-by-side display
@@ -242,6 +250,9 @@ def create_comparison_image(original: np.ndarray, rendered: np.ndarray) -> Image
 def render_on_modal() -> Tuple[bytes, bytes]:
     """Main execution function running on Modal with GPU."""
     import io
+    import torch
+    import numpy as np
+    from PIL import Image
 
     mission = "2024-10-01-11-29-55"
     cache_dir = "/tmp/cache"
@@ -263,9 +274,24 @@ def render_on_modal() -> Tuple[bytes, bytes]:
     print("Creating point cloud...")
     points, colors = create_point_cloud(rgb, depth, intrinsics)
 
-    # Define new camera pose (translate camera down)
+    # Define new camera pose (translate down and tilt up slightly)
+    import math
+
     viewmat = torch.eye(4)
-    viewmat[:3, 3] = torch.tensor([0.0, -0.3, 0.0])  # Move down
+    viewmat[:3, 3] = torch.tensor([0.0, -1, 0.0])  # Move down
+
+    # Tilt up by 15 degrees (rotation around X-axis)
+    angle = math.radians(-25)  # Positive angle tilts up
+    rotation_x = torch.tensor(
+        [
+            [1, 0, 0, 0],
+            [0, math.cos(angle), -math.sin(angle), 0],
+            [0, math.sin(angle), math.cos(angle), 0],
+            [0, 0, 0, 1],
+        ],
+        dtype=torch.float32,
+    )
+    viewmat = rotation_x @ viewmat
 
     K = torch.from_numpy(intrinsics).float()
 
