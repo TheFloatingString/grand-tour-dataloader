@@ -11,43 +11,52 @@ OUTPUT_PATH = Path("frontend/public/base_position.json")
 TARGET_FPS = 30
 
 
-def load_odometry(zarr_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load base position and timestamps from Zarr store."""
+def load_odometry(
+    zarr_path: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load base position, orientation, timestamps from Zarr store."""
     group = zarr.open_group(str(zarr_path), mode="r")
     timestamps = np.array(group["timestamp"])
     positions = np.array(group["pose_pos"])  # Nx3: [x, y, z]
-    return positions, timestamps
+    orientations = np.array(group["pose_orien"])  # Nx4: [x, y, z, w]
+    return positions, orientations, timestamps
 
 
 def downsample(
     positions: np.ndarray,
+    orientations: np.ndarray,
     timestamps: np.ndarray,
     target_fps: float,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Downsample to target FPS by uniform index selection."""
     duration = timestamps[-1] - timestamps[0]
     n_out = int(duration * target_fps)
     indices = np.linspace(0, len(timestamps) - 1, n_out, dtype=int)
-    return positions[indices], timestamps[indices]
+    return positions[indices], orientations[indices], timestamps[indices]
 
 
 def export(zarr_path: Path, output_path: Path, fps: float) -> None:
-    """Load, downsample, and write base position data to JSON."""
+    """Load, downsample, and write base pose data to JSON."""
     print(f"Loading from {zarr_path} ...")
-    positions, timestamps = load_odometry(zarr_path)
+    positions, orientations, timestamps = load_odometry(zarr_path)
     print(f"  {len(timestamps):,} samples loaded")
 
-    positions, timestamps = downsample(positions, timestamps, fps)
+    positions, orientations, timestamps = downsample(
+        positions, orientations, timestamps, fps
+    )
     t0 = float(timestamps[0])
     rel_timestamps = (timestamps - t0).tolist()
     print(f"  Downsampled to {len(rel_timestamps):,} frames at {fps} fps")
+
+    # Combine into Nx7: [x, y, z, qx, qy, qz, qw]
+    frames = np.concatenate([positions, orientations], axis=1)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "fps": fps,
         "duration": rel_timestamps[-1],
         "timestamps": rel_timestamps,
-        "frames": positions.tolist(),
+        "frames": frames.tolist(),
     }
     with open(output_path, "w") as f:
         json.dump(payload, f)

@@ -7,10 +7,12 @@ import {
   BufferAttribute,
   BufferGeometry,
   DoubleSide,
+  Euler,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D,
+  Quaternion,
   Vector3,
 } from "three";
 import URDFLoader from "urdf-loader";
@@ -31,7 +33,7 @@ interface BasePosData {
   fps: number;
   duration: number;
   timestamps: number[];
-  frames: number[][];  // Nx3: [x, y, z]
+  frames: number[][];  // Nx7: [x, y, z, qx, qy, qz, qw]
 }
 
 interface PlaybackState {
@@ -66,7 +68,6 @@ function RobotLoader({
             child.renderOrder = 1;
           }
         });
-        robot.rotation.x = -Math.PI / 2;
         robot.position.y = 0.5;
         scene.add(robot);
         robotRef.current = robot;
@@ -79,6 +80,9 @@ function RobotLoader({
 
   return null;
 }
+
+// Base rotation applied to robot mesh at load time (ROS Z-up -> Three.js Y-up)
+const BASE_ROT = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, 0));
 
 function BasePosDriver({
   basePosData,
@@ -122,6 +126,12 @@ function BasePosDriver({
 
     robotRef.current.position.set(rel.x, rel.y, rel.z);
     prevRobotPosRef.current = rel.clone();
+
+    // Apply orientation: compose base axis-swap with ROS quaternion [qx, qy, qz, qw]
+    if (f.length >= 7) {
+      const rosQ = new Quaternion(f[3], f[4], f[5], f[6]);
+      robotRef.current.quaternion.copy(BASE_ROT).multiply(rosQ);
+    }
   });
 
   return null;
@@ -455,6 +465,39 @@ export function CanvasContent() {
               );
             })
           ) : (
+            <p className="text-xs text-zinc-400">No data</p>
+          )}
+          <hr className="border-zinc-200 dark:border-zinc-700" />
+          <h2 className="font-semibold text-sm">Orientation (RPY °)</h2>
+          {basePosData ? (() => {
+            const bIdx = Math.min(
+              Math.floor((playbackData?.timestamps[frameIdx] ?? 0) * basePosData.fps),
+              basePosData.frames.length - 1
+            );
+            const f = basePosData.frames[bIdx];
+            const toRPY = (frame: number[]) => {
+              if (frame.length < 7) return [0, 0, 0];
+              const eu = new Euler().setFromQuaternion(
+                new Quaternion(frame[3], frame[4], frame[5], frame[6]),
+                "ZYX"
+              );
+              // ZYX: eu.z=yaw, eu.y=pitch, eu.x=roll
+              return [eu.x, eu.y, eu.z].map((v) => (v * 180) / Math.PI);
+            };
+            const rpyDeg = f ? toRPY(f) : [0, 0, 0];
+            return (["roll", "pitch", "yaw"] as const).map((label, i) => {
+              const sparkVals = basePosHistoryRef.current.map((e) => toRPY(e.xyz)[i]);
+              return (
+                <div key={label} className="flex flex-col gap-0.5">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-zinc-500">{label}</span>
+                    <span className="text-zinc-800 dark:text-zinc-200">{rpyDeg[i].toFixed(1)}°</span>
+                  </div>
+                  <Sparkline values={sparkVals} />
+                </div>
+              );
+            });
+          })() : (
             <p className="text-xs text-zinc-400">No data</p>
           )}
           <hr className="border-zinc-200 dark:border-zinc-700" />
