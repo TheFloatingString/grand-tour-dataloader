@@ -1,0 +1,3 @@
+[submodule "frontend/public/anymal_d_simple_description"]
+	path = frontend/public/anymal_d_simple_description
+	url = https://github.com/ANYbotics/anymal_d_simple_description.git
